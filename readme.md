@@ -12,9 +12,9 @@ It uses the Bocheva & Rahnev (2025) orientation discrimination study as a hands-
 - **Input**: `psychopy/readme.md` (specifications), `psychopy/skeleton.psyexp` (template)
 - **Task**: Modify XML to implement orientation discrimination task
 
-### Stage 2: Data Collection (https://osf.io/preprints/osf/rzus6_v1)
+### Stage 2: Data Collection (https://osf.io/yns96/files)
 **Goal**: Understand data structure
-- **Note**: Using existing data from `study/Raw_Data/` (pretending it's newly collected)
+- **Note**: Using existing data from `study/Raw_Data/` (copied from https://osf.io/yns96/files, pretending it's newly collected)
 - **Format**: CSV with 9 columns (Subject, Stimulus, Response, Confidence, Correct, Contrast, Side, RT_Decision, RT_Confidence)
 
 ### Stage 3: Data Analysis (To be done)

@@ -1443,7 +1443,7 @@ class: text-center
 
 ### Resources
 
-📂 **Demo Project**: [github.com/strongway/agents-in-research](https://github.com)
+📂 **Demo Project**: [github.com/strongway/agents-in-research](https://github.com/strongway/agents-in-research)
 
 🎓 **GitHub Student Pack**: [education.github.com](https://education.github.com)
 
