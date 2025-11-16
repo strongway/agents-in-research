@@ -1,0 +1,788 @@
+---
+title: "Serial Dependence Analysis - Bocheva & Rahnev (2025)"
+subtitle: "Analysis Version 2 (Revised)"
+author: "AI Research Agent"
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    theme: cosmo
+    embed-resources: true
+  pdf:
+    toc: true
+    number-sections: true
+    colorlinks: true
+execute:
+  warning: false
+  message: false
+  cache: false
+---
+
+# Overview
+
+This notebook analyzes choice and confidence serial dependence effects in an orientation discrimination task with hand/action manipulations.
+
+**Main analyses:**
+
+1. **Descriptive statistics**: Basic task performance metrics (NEW in v2)
+2. **Choice serial dependence**: Response(t) = b₀ + b₁·Response(t-1) + ε
+3. **Confidence serial dependence**: Confidence(t) = c₀ + c₁·Confidence(t-1) + ε
+4. **Dominant hand effect**: Previous left vs. right hand
+
+**Key improvements in v2:**
+
+- Converted to R/Quarto for better academic publishing integration
+- Added comprehensive descriptive statistics tables (REVIEW IMPORTANT-002)
+- Replaced bar plots with boxplots (REVIEW IMPORTANT-006)
+- Combined experiments into multi-panel figures (REVIEW IMPORTANT-006)
+- Applied colorblind-friendly palette (REVIEW IMPORTANT-001)
+- Integrated APA-style reporting throughout
+
+**Date:** `r Sys.Date()`
+
+```{r setup}
+#| label: setup
+#| include: false
+
+# Load required packages
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(patchwork)
+library(broom)
+
+# Set random seed for reproducibility
+set.seed(42)
+
+# Define paths
+DATA_DIR <- file.path("..", "Raw_Data")
+FIGURES_DIR <- "figures_v2"
+dir.create(FIGURES_DIR, showWarnings = FALSE, recursive = TRUE)
+
+# Set ggplot theme
+theme_set(theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "grey90", color = NA),
+    strip.text = element_text(face = "bold", size = 12),
+    plot.title = element_text(face = "bold", size = 16),
+    axis.title = element_text(face = "bold")
+  ))
+
+# Define colorblind-friendly palette (IMPORTANT-001)
+COLOR_REPEAT <- "#4477AA"  # Blue
+COLOR_SWITCH <- "#EE6677"  # Rose/Red
+COLOR_LEFT <- "#228833"    # Green
+COLOR_RIGHT <- "#CCBB44"   # Yellow
+
+cat("Packages loaded successfully!\n")
+```
+
+# 1. Data Loading and Preprocessing
+
+```{r data-functions}
+#| label: data-functions
+
+load_and_clean_data <- function(filename, experiment_name) {
+  cat("\n", strrep("=", 60), "\n", sep = "")
+  cat("Loading", toupper(experiment_name), "\n")
+  cat(strrep("=", 60), "\n")
+
+  # Load data
+  df <- read_csv(file.path(DATA_DIR, filename), show_col_types = FALSE)
+  raw_trials <- nrow(df)
+  raw_subjects <- n_distinct(df$Subject)
+
+  # Clean subject IDs
+  df <- df %>%
+    mutate(Subject = str_trim(as.character(Subject)))
+
+  # EXCLUSION 1: Subjects using single confidence rating >90% of trials
+  conf_usage <- df %>%
+    count(Subject, Confidence) %>%
+    group_by(Subject) %>%
+    mutate(pct = n / sum(n)) %>%
+    ungroup()
+
+  excluded_subjects <- conf_usage %>%
+    group_by(Subject) %>%
+    summarize(max_pct = max(pct), .groups = "drop") %>%
+    filter(max_pct > 0.9) %>%
+    pull(Subject)
+
+  cat("\nSubject exclusion:\n")
+  cat("  - Total subjects:", raw_subjects, "\n")
+  cat("  - Excluded (>90% single rating):", length(excluded_subjects), "\n")
+
+  df <- df %>%
+    filter(!Subject %in% excluded_subjects)
+
+  # EXCLUSION 2: Trials with RT >= 3 seconds
+  trials_after_subj <- nrow(df)
+  df <- df %>%
+    filter(RT_Decision < 3, RT_Confidence < 3)
+
+  excluded_trials <- trials_after_subj - nrow(df)
+
+  cat("\nTrial exclusion:\n")
+  cat("  - Trials after subject exclusion:", trials_after_subj, "\n")
+  cat("  - Excluded (RT >= 3s):", excluded_trials, "\n")
+  cat("  - Valid trials:", nrow(df), "\n")
+  cat("  - Valid subjects:", n_distinct(df$Subject), "\n")
+
+  stats <- list(
+    raw_trials = raw_trials,
+    raw_subjects = raw_subjects,
+    excluded_subjects = length(excluded_subjects),
+    excluded_trials = excluded_trials,
+    valid_trials = nrow(df),
+    valid_subjects = n_distinct(df$Subject)
+  )
+
+  list(data = df, stats = stats)
+}
+```
+
+## Load Experiment 1
+
+```{r load-exp1}
+#| label: load-exp1
+
+result1 <- load_and_clean_data("exp1.csv", "Experiment 1")
+df1 <- result1$data
+stats1 <- result1$stats
+```
+
+## Load Experiment 2
+
+```{r load-exp2}
+#| label: load-exp2
+
+result2 <- load_and_clean_data("exp2.csv", "Experiment 2")
+df2 <- result2$data
+stats2 <- result2$stats
+```
+
+# 2. Descriptive Statistics
+
+**NEW in v2:** Following REVIEW.md IMPORTANT-002, we report basic task performance to provide context for serial dependence effects.
+
+```{r descriptive-stats-function}
+#| label: descriptive-stats-function
+
+compute_descriptive_stats <- function(df, condition_col) {
+  # Overall statistics
+  overall <- df %>%
+    summarize(
+      N_subjects = n_distinct(Subject),
+      N_trials = n(),
+      Accuracy = mean(Correct) * 100,
+      Accuracy_SD = sd(Correct) * 100,
+      Mean_Confidence = mean(Confidence),
+      Confidence_SD = sd(Confidence),
+      RT_Decision_M = mean(RT_Decision) * 1000,
+      RT_Decision_SD = sd(RT_Decision) * 1000,
+      RT_Confidence_M = mean(RT_Confidence) * 1000,
+      RT_Confidence_SD = sd(RT_Confidence) * 1000
+    )
+
+  # By-subject statistics
+  by_subject <- df %>%
+    group_by(Subject) %>%
+    summarize(
+      Accuracy = mean(Correct) * 100,
+      Mean_Confidence = mean(Confidence),
+      RT_Decision = mean(RT_Decision) * 1000,
+      RT_Confidence = mean(RT_Confidence) * 1000,
+      .groups = "drop"
+    )
+
+  # Contrast effect (if Contrast column exists)
+  if ("Contrast" %in% names(df)) {
+    contrast_effect <- df %>%
+      group_by(Contrast) %>%
+      summarize(
+        Accuracy = mean(Correct) * 100,
+        Mean_Confidence = mean(Confidence),
+        .groups = "drop"
+      )
+  } else {
+    contrast_effect <- NULL
+  }
+
+  # Confidence distribution
+  conf_dist <- df %>%
+    count(Confidence) %>%
+    mutate(Percentage = n / sum(n) * 100)
+
+  list(
+    overall = overall,
+    by_subject = by_subject,
+    contrast_effect = contrast_effect,
+    conf_dist = conf_dist
+  )
+}
+```
+
+## Experiment 1 Descriptive Statistics
+
+```{r desc-exp1}
+#| label: desc-exp1
+#| tbl-cap: "Descriptive Statistics - Experiment 1"
+
+desc1 <- compute_descriptive_stats(df1, "Side")
+
+# Create summary table
+desc1$overall %>%
+  pivot_longer(everything(), names_to = "Metric", values_to = "Value") %>%
+  mutate(
+    Value = case_when(
+      str_detect(Metric, "N_") ~ sprintf("%.0f", Value),
+      str_detect(Metric, "Accuracy|Confidence") & !str_detect(Metric, "SD") ~ sprintf("%.2f", Value),
+      str_detect(Metric, "RT") ~ sprintf("%.1f", Value),
+      TRUE ~ sprintf("%.2f", Value)
+    ),
+    Metric = str_replace_all(Metric, "_", " ")
+  ) %>%
+  kable(
+    col.names = c("Metric", "Value"),
+    align = c("l", "r"),
+    booktabs = TRUE
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
+```
+
+**Experiment 1 Performance Summary:** Participants completed `r stats1$valid_trials` trials across `r stats1$valid_subjects` subjects after exclusions. Overall accuracy averaged `r sprintf("%.1f%%", desc1$overall$Accuracy)` (*SD* = `r sprintf("%.1f%%", desc1$overall$Accuracy_SD)`), with mean confidence ratings of `r sprintf("%.2f", desc1$overall$Mean_Confidence)` (*SD* = `r sprintf("%.2f", desc1$overall$Confidence_SD)`) on the 4-point scale. Decision response times averaged `r sprintf("%.0f", desc1$overall$RT_Decision_M)` ms (*SD* = `r sprintf("%.0f", desc1$overall$RT_Decision_SD)` ms), while confidence judgments took `r sprintf("%.0f", desc1$overall$RT_Confidence_M)` ms (*SD* = `r sprintf("%.0f", desc1$overall$RT_Confidence_SD)` ms).
+
+## Experiment 2 Descriptive Statistics
+
+```{r desc-exp2}
+#| label: desc-exp2
+#| tbl-cap: "Descriptive Statistics - Experiment 2"
+
+desc2 <- compute_descriptive_stats(df2, "Hand")
+
+# Create summary table
+desc2$overall %>%
+  pivot_longer(everything(), names_to = "Metric", values_to = "Value") %>%
+  mutate(
+    Value = case_when(
+      str_detect(Metric, "N_") ~ sprintf("%.0f", Value),
+      str_detect(Metric, "Accuracy|Confidence") & !str_detect(Metric, "SD") ~ sprintf("%.2f", Value),
+      str_detect(Metric, "RT") ~ sprintf("%.1f", Value),
+      TRUE ~ sprintf("%.2f", Value)
+    ),
+    Metric = str_replace_all(Metric, "_", " ")
+  ) %>%
+  kable(
+    col.names = c("Metric", "Value"),
+    align = c("l", "r"),
+    booktabs = TRUE
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
+```
+
+**Experiment 2 Performance Summary:** Participants completed `r stats2$valid_trials` trials across `r stats2$valid_subjects` subjects after exclusions. Overall accuracy averaged `r sprintf("%.1f%%", desc2$overall$Accuracy)` (*SD* = `r sprintf("%.1f%%", desc2$overall$Accuracy_SD)`), with mean confidence ratings of `r sprintf("%.2f", desc2$overall$Mean_Confidence)` (*SD* = `r sprintf("%.2f", desc2$overall$Confidence_SD)`). Decision response times averaged `r sprintf("%.0f", desc2$overall$RT_Decision_M)` ms (*SD* = `r sprintf("%.0f", desc2$overall$RT_Decision_SD)` ms), while confidence judgments took `r sprintf("%.0f", desc2$overall$RT_Confidence_M)` ms (*SD* = `r sprintf("%.0f", desc2$overall$RT_Confidence_SD)` ms).
+
+# 3. Serial Dependence Analysis Functions
+
+```{r serial-dep-functions}
+#| label: serial-dep-functions
+
+compute_serial_dependence_slopes <- function(df, variable, condition_column) {
+  # Compute slopes for repeat vs. switch trials
+  slopes <- df %>%
+    group_by(Subject) %>%
+    arrange(Subject) %>%
+    mutate(
+      lagged_var = lag(!!sym(variable)),
+      lagged_cond = lag(!!sym(condition_column))
+    ) %>%
+    ungroup() %>%
+    drop_na(lagged_var, lagged_cond) %>%
+    mutate(
+      trial_type = if_else(!!sym(condition_column) == lagged_cond, "repeat", "switch")
+    ) %>%
+    group_by(Subject, trial_type) %>%
+    filter(n() > 10) %>%  # Require minimum 10 trials
+    do({
+      fit <- lm(reformulate("lagged_var", response = variable), data = .)
+      tibble(slope = coef(fit)[2])
+    }) %>%
+    ungroup() %>%
+    pivot_wider(names_from = trial_type, values_from = slope, names_prefix = "slope_")
+
+  slopes
+}
+
+compute_dominant_hand_slopes <- function(df, variable, condition_column) {
+  # Compute slopes by previous hand (1=left, 2=right)
+  slopes <- df %>%
+    group_by(Subject) %>%
+    arrange(Subject) %>%
+    mutate(
+      lagged_var = lag(!!sym(variable)),
+      lagged_cond = lag(!!sym(condition_column))
+    ) %>%
+    ungroup() %>%
+    drop_na(lagged_var, lagged_cond) %>%
+    mutate(
+      prev_hand = if_else(lagged_cond == 1, "left", "right")
+    ) %>%
+    group_by(Subject, prev_hand) %>%
+    filter(n() > 10) %>%
+    do({
+      fit <- lm(reformulate("lagged_var", response = variable), data = .)
+      tibble(slope = coef(fit)[2])
+    }) %>%
+    ungroup() %>%
+    pivot_wider(names_from = prev_hand, values_from = slope, names_prefix = "slope_")
+
+  slopes
+}
+
+compute_statistics <- function(slopes, col1, col2, label1, label2) {
+  # Extract slopes
+  slopes1 <- slopes[[col1]]
+  slopes2 <- slopes[[col2]]
+
+  # Remove NAs
+  valid_idx <- !is.na(slopes1) & !is.na(slopes2)
+  slopes1 <- slopes1[valid_idx]
+  slopes2 <- slopes2[valid_idx]
+
+  # One-sample t-tests (vs. 0)
+  test1 <- t.test(slopes1, mu = 0)
+  test2 <- t.test(slopes2, mu = 0)
+
+  # Paired t-test
+  test_paired <- t.test(slopes1, slopes2, paired = TRUE)
+
+  # Cohen's d
+  cohen_d1 <- mean(slopes1) / sd(slopes1)
+  cohen_d2 <- mean(slopes2) / sd(slopes2)
+  cohen_d_paired <- mean(slopes1 - slopes2) / sd(slopes1 - slopes2)
+
+  list(
+    n = length(slopes1),
+    mean1 = mean(slopes1),
+    sd1 = sd(slopes1),
+    mean2 = mean(slopes2),
+    sd2 = sd(slopes2),
+    test1 = test1,
+    test2 = test2,
+    test_paired = test_paired,
+    cohen_d1 = cohen_d1,
+    cohen_d2 = cohen_d2,
+    cohen_d_paired = cohen_d_paired,
+    label1 = label1,
+    label2 = label2
+  )
+}
+
+format_p_value <- function(p) {
+  if (p < 0.001) {
+    "< .001"
+  } else {
+    sprintf("= %.3f", p) %>% str_replace("0\\.", ".")
+  }
+}
+
+report_statistics <- function(stats) {
+  cat("\n", stats$label1, ":\n", sep = "")
+  cat(sprintf("  M = %.2f, SD = %.2f\n", stats$mean1, stats$sd1))
+  cat(sprintf("  One-sample t-test vs. 0: t(%d) = %.2f, p %s, d = %.2f\n",
+              stats$test1$parameter,
+              stats$test1$statistic,
+              format_p_value(stats$test1$p.value),
+              stats$cohen_d1))
+
+  cat("\n", stats$label2, ":\n", sep = "")
+  cat(sprintf("  M = %.2f, SD = %.2f\n", stats$mean2, stats$sd2))
+  cat(sprintf("  One-sample t-test vs. 0: t(%d) = %.2f, p %s, d = %.2f\n",
+              stats$test2$parameter,
+              stats$test2$statistic,
+              format_p_value(stats$test2$p.value),
+              stats$cohen_d2))
+
+  cat(sprintf("\nPaired comparison (%s vs. %s):\n", stats$label1, stats$label2))
+  cat(sprintf("  t(%d) = %.2f, p %s, d = %.2f\n",
+              stats$test_paired$parameter,
+              stats$test_paired$statistic,
+              format_p_value(stats$test_paired$p.value),
+              stats$cohen_d_paired))
+}
+```
+
+# 4. Visualization Functions
+
+**NEW in v2:** Following REVIEW.md IMPORTANT-006, we now use boxplots instead of bar plots and combine both experiments into multi-panel figures.
+
+```{r plot-functions}
+#| label: plot-functions
+#| fig-width: 14
+#| fig-height: 7
+
+plot_combined_serial_dependence <- function(
+  slopes1_exp1, slopes1_exp2,
+  slopes2_exp1, slopes2_exp2,
+  label1, label2,
+  p_val_exp1, p_val_exp2,
+  title_base,
+  filename,
+  color1 = COLOR_REPEAT,
+  color2 = COLOR_SWITCH
+) {
+  # Prepare data for Experiment 1
+  data_exp1 <- bind_rows(
+    tibble(value = slopes1_exp1, condition = label1),
+    tibble(value = slopes2_exp1, condition = label2)
+  ) %>%
+    mutate(
+      condition = factor(condition, levels = c(label1, label2)),
+      experiment = "Experiment 1"
+    )
+
+  # Add subject IDs for connecting lines
+  n_subj <- length(slopes1_exp1)
+  data_exp1$subject_id <- rep(1:n_subj, 2)
+
+  # Prepare data for Experiment 2
+  data_exp2 <- bind_rows(
+    tibble(value = slopes1_exp2, condition = label1),
+    tibble(value = slopes2_exp2, condition = label2)
+  ) %>%
+    mutate(
+      condition = factor(condition, levels = c(label1, label2)),
+      experiment = "Experiment 2"
+    )
+
+  n_subj2 <- length(slopes1_exp2)
+  data_exp2$subject_id <- rep(1:n_subj2, 2)
+
+  # Helper function to create individual plot
+  create_panel <- function(data, p_val, exp_label, panel_label) {
+    # Calculate statistics for annotation
+    y_max <- max(data$value, na.rm = TRUE)
+    y_min <- min(data$value, na.rm = TRUE)
+    y_range <- y_max - y_min
+    y_line <- y_max + 0.10 * y_range
+    y_text <- y_max + 0.15 * y_range
+
+    # Create base plot
+    p <- ggplot(data, aes(x = condition, y = value, fill = condition)) +
+      # Boxplots (NEW in v2)
+      geom_boxplot(
+        alpha = 0.6,
+        width = 0.5,
+        outlier.shape = NA
+      ) +
+      # Individual points with jitter
+      geom_point(
+        aes(color = condition),
+        position = position_jitter(width = 0.15, seed = 42),
+        size = 2.5,
+        alpha = 0.6,
+        show.legend = FALSE
+      ) +
+      # Connect paired points
+      geom_line(
+        aes(group = subject_id),
+        alpha = 0.2,
+        linewidth = 0.5,
+        position = position_jitter(width = 0.15, seed = 42)
+      ) +
+      # Significance annotation
+      annotate(
+        "segment",
+        x = 1, xend = 2,
+        y = y_line, yend = y_line,
+        linewidth = 1
+      ) +
+      annotate(
+        "text",
+        x = 1.5, y = y_text,
+        label = paste0("p ", format_p_value(p_val)),
+        size = 6
+      ) +
+      # Panel label
+      annotate(
+        "text",
+        x = -Inf, y = Inf,
+        label = panel_label,
+        hjust = -0.5, vjust = 1.5,
+        size = 8,
+        fontface = "bold"
+      ) +
+      # Scales and colors
+      scale_fill_manual(values = c(color1, color2)) +
+      scale_color_manual(values = c(color1, color2)) +
+      scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +
+      # Labels
+      labs(
+        title = exp_label,
+        x = NULL,
+        y = "Serial dependence strength (β)"
+      ) +
+      # Theme
+      theme_minimal(base_size = 14) +
+      theme(
+        legend.position = "none",
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+        axis.title.y = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 12),
+        panel.border = element_rect(color = "grey80", fill = NA, linewidth = 1)
+      )
+
+    p
+  }
+
+  # Create panels
+  p1 <- create_panel(data_exp1, p_val_exp1, "Experiment 1", "A")
+  p2 <- create_panel(data_exp2, p_val_exp2, "Experiment 2", "B")
+
+  # Combine using patchwork
+  combined <- p1 + p2 +
+    plot_annotation(
+      title = title_base,
+      theme = theme(
+        plot.title = element_text(face = "bold", size = 18, hjust = 0.5)
+      )
+    )
+
+  # Save
+  ggsave(
+    file.path(FIGURES_DIR, paste0(filename, ".png")),
+    combined,
+    width = 14,
+    height = 7,
+    dpi = 300
+  )
+
+  ggsave(
+    file.path(FIGURES_DIR, paste0(filename, ".pdf")),
+    combined,
+    width = 14,
+    height = 7
+  )
+
+  cat(sprintf("  Saved: %s.png, %s.pdf\n", filename, filename))
+
+  combined
+}
+```
+
+# 5. Main Analyses
+
+## 5.1 Confidence Serial Dependence
+
+```{r conf-serial-dep}
+#| label: conf-serial-dep
+#| fig-cap: "Confidence serial dependence in both experiments. Boxplots show distribution of regression slopes (β) quantifying how confidence on trial t depends on confidence on trial t-1. Individual data points represent subject-level slopes, with lines connecting paired repeat/switch values within subjects. Error bars show interquartile range. Repeat trials (blue) show stronger serial dependence than switch trials (rose), indicating that confidence judgments are more influenced by recent history when the same hand/action is repeated."
+
+cat("\n", strrep("=", 60), "\n", sep = "")
+cat("CONFIDENCE SERIAL DEPENDENCE\n")
+cat(strrep("=", 60), "\n")
+
+# Experiment 1
+slopes_conf1 <- compute_serial_dependence_slopes(df1, "Confidence", "Side")
+stats_conf1 <- compute_statistics(
+  slopes_conf1,
+  "slope_repeat", "slope_switch",
+  "Repeat", "Switch"
+)
+
+cat("\n--- EXPERIMENT 1 ---\n")
+report_statistics(stats_conf1)
+
+# Experiment 2
+slopes_conf2 <- compute_serial_dependence_slopes(df2, "Confidence", "Hand")
+stats_conf2 <- compute_statistics(
+  slopes_conf2,
+  "slope_repeat", "slope_switch",
+  "Repeat", "Switch"
+)
+
+cat("\n--- EXPERIMENT 2 ---\n")
+report_statistics(stats_conf2)
+
+# Create combined plot
+cat("\nGenerating combined figure...\n")
+fig_conf <- plot_combined_serial_dependence(
+  slopes_conf1$slope_repeat,
+  slopes_conf2$slope_repeat,
+  slopes_conf1$slope_switch,
+  slopes_conf2$slope_switch,
+  "Repeat",
+  "Switch",
+  stats_conf1$test_paired$p.value,
+  stats_conf2$test_paired$p.value,
+  "Confidence Serial Dependence",
+  "conf_serial_dep_combined"
+)
+
+fig_conf
+```
+
+### Statistical Summary
+
+Serial dependence in confidence judgments differed substantially between repeat and switch trials in both experiments. In Experiment 1, confidence ratings showed stronger dependence on the previous trial when participants repeated the same hand (*M* = `r sprintf("%.2f", stats_conf1$mean1)`, *SD* = `r sprintf("%.2f", stats_conf1$sd1)`) compared to when they switched hands (*M* = `r sprintf("%.2f", stats_conf1$mean2)`, *SD* = `r sprintf("%.2f", stats_conf1$sd2)`), *t*(`r stats_conf1$test_paired$parameter`) = `r sprintf("%.2f", stats_conf1$test_paired$statistic)`, *p* `r format_p_value(stats_conf1$test_paired$p.value)`, *d* = `r sprintf("%.2f", stats_conf1$cohen_d_paired)`.
+
+This pattern replicated in Experiment 2, where confidence serial dependence was again stronger for repeated actions (*M* = `r sprintf("%.2f", stats_conf2$mean1)`, *SD* = `r sprintf("%.2f", stats_conf2$sd1)`) than switched actions (*M* = `r sprintf("%.2f", stats_conf2$mean2)`, *SD* = `r sprintf("%.2f", stats_conf2$sd2)`), *t*(`r stats_conf2$test_paired$parameter`) = `r sprintf("%.2f", stats_conf2$test_paired$statistic)`, *p* `r format_p_value(stats_conf2$test_paired$p.value)`, *d* = `r sprintf("%.2f", stats_conf2$cohen_d_paired)`.
+
+One-sample t-tests confirmed that repeat-trial slopes differed significantly from zero in both Experiment 1, *t*(`r stats_conf1$test1$parameter`) = `r sprintf("%.2f", stats_conf1$test1$statistic)`, *p* `r format_p_value(stats_conf1$test1$p.value)`, *d* = `r sprintf("%.2f", stats_conf1$cohen_d1)`, and Experiment 2, *t*(`r stats_conf2$test1$parameter`) = `r sprintf("%.2f", stats_conf2$test1$statistic)`, *p* `r format_p_value(stats_conf2$test1$p.value)`, *d* = `r sprintf("%.2f", stats_conf2$cohen_d1)`, demonstrating robust positive serial dependence when the same hand or action was repeated.
+
+## 5.2 Choice Serial Dependence
+
+```{r choice-serial-dep}
+#| label: choice-serial-dep
+#| fig-cap: "Choice serial dependence in both experiments. Boxplots show distribution of regression slopes (β) quantifying how responses on trial t depend on responses on trial t-1. Individual data points and connecting lines show subject-level paired data. Repeat trials (blue) show stronger serial dependence than switch trials (rose), indicating that perceptual choices are more influenced by recent decisions when the same hand/action is repeated."
+
+cat("\n", strrep("=", 60), "\n", sep = "")
+cat("CHOICE SERIAL DEPENDENCE\n")
+cat(strrep("=", 60), "\n")
+
+# Experiment 1
+slopes_choice1 <- compute_serial_dependence_slopes(df1, "Response", "Side")
+stats_choice1 <- compute_statistics(
+  slopes_choice1,
+  "slope_repeat", "slope_switch",
+  "Repeat", "Switch"
+)
+
+cat("\n--- EXPERIMENT 1 ---\n")
+report_statistics(stats_choice1)
+
+# Experiment 2
+slopes_choice2 <- compute_serial_dependence_slopes(df2, "Response", "Hand")
+stats_choice2 <- compute_statistics(
+  slopes_choice2,
+  "slope_repeat", "slope_switch",
+  "Repeat", "Switch"
+)
+
+cat("\n--- EXPERIMENT 2 ---\n")
+report_statistics(stats_choice2)
+
+# Create combined plot
+cat("\nGenerating combined figure...\n")
+fig_choice <- plot_combined_serial_dependence(
+  slopes_choice1$slope_repeat,
+  slopes_choice2$slope_repeat,
+  slopes_choice1$slope_switch,
+  slopes_choice2$slope_switch,
+  "Repeat",
+  "Switch",
+  stats_choice1$test_paired$p.value,
+  stats_choice2$test_paired$p.value,
+  "Choice Serial Dependence",
+  "choice_serial_dep_combined"
+)
+
+fig_choice
+```
+
+### Statistical Summary
+
+Choice serial dependence—the tendency for perceptual decisions to be influenced by previous responses—also varied systematically with hand/action repetition. In Experiment 1, orientation judgments showed stronger dependence on the previous trial's choice when the same hand was used (*M* = `r sprintf("%.2f", stats_choice1$mean1)`, *SD* = `r sprintf("%.2f", stats_choice1$sd1)`) compared to different hands (*M* = `r sprintf("%.2f", stats_choice1$mean2)`, *SD* = `r sprintf("%.2f", stats_choice1$sd2)`), *t*(`r stats_choice1$test_paired$parameter`) = `r sprintf("%.2f", stats_choice1$test_paired$statistic)`, *p* `r format_p_value(stats_choice1$test_paired$p.value)`, *d* = `r sprintf("%.2f", stats_choice1$cohen_d_paired)`.
+
+Experiment 2 revealed a similar pattern, with repeated actions producing stronger choice serial dependence (*M* = `r sprintf("%.2f", stats_choice2$mean1)`, *SD* = `r sprintf("%.2f", stats_choice2$sd1)`) than switched actions (*M* = `r sprintf("%.2f", stats_choice2$mean2)`, *SD* = `r sprintf("%.2f", stats_choice2$sd2)`), *t*(`r stats_choice2$test_paired$parameter`) = `r sprintf("%.2f", stats_choice2$test_paired$statistic)`, *p* `r format_p_value(stats_choice2$test_paired$p.value)`, *d* = `r sprintf("%.2f", stats_choice2$cohen_d_paired)`.
+
+## 5.3 Dominant Hand Effect
+
+```{r dominant-hand}
+#| label: dominant-hand
+#| fig-cap: "Dominant hand effect on confidence serial dependence. Boxplots show regression slopes (β) for trials following left-hand (green) vs. right-hand (yellow) responses. Individual data points and connecting lines show subject-level paired data. The comparison tests whether serial dependence strength differs based on which hand was used on the previous trial."
+
+cat("\n", strrep("=", 60), "\n", sep = "")
+cat("DOMINANT HAND EFFECT\n")
+cat(strrep("=", 60), "\n")
+
+# Experiment 1
+slopes_hand1 <- compute_dominant_hand_slopes(df1, "Confidence", "Side")
+stats_hand1 <- compute_statistics(
+  slopes_hand1,
+  "slope_left", "slope_right",
+  "Previous Left", "Previous Right"
+)
+
+cat("\n--- EXPERIMENT 1 ---\n")
+report_statistics(stats_hand1)
+
+# Experiment 2
+slopes_hand2 <- compute_dominant_hand_slopes(df2, "Confidence", "Hand")
+stats_hand2 <- compute_statistics(
+  slopes_hand2,
+  "slope_left", "slope_right",
+  "Previous Left", "Previous Right"
+)
+
+cat("\n--- EXPERIMENT 2 ---\n")
+report_statistics(stats_hand2)
+
+# Create combined plot
+cat("\nGenerating combined figure...\n")
+fig_hand <- plot_combined_serial_dependence(
+  slopes_hand1$slope_left,
+  slopes_hand2$slope_left,
+  slopes_hand1$slope_right,
+  slopes_hand2$slope_right,
+  "Previous Left",
+  "Previous Right",
+  stats_hand1$test_paired$p.value,
+  stats_hand2$test_paired$p.value,
+  "Dominant Hand Effect",
+  "dominant_hand_combined",
+  color1 = COLOR_LEFT,
+  color2 = COLOR_RIGHT
+)
+
+fig_hand
+```
+
+### Statistical Summary
+
+We examined whether serial dependence differed based on which hand was used on the previous trial. In Experiment 1, confidence serial dependence following left-hand trials (*M* = `r sprintf("%.2f", stats_hand1$mean1)`, *SD* = `r sprintf("%.2f", stats_hand1$sd1)`) did not differ significantly from that following right-hand trials (*M* = `r sprintf("%.2f", stats_hand1$mean2)`, *SD* = `r sprintf("%.2f", stats_hand1$sd2)`), *t*(`r stats_hand1$test_paired$parameter`) = `r sprintf("%.2f", stats_hand1$test_paired$statistic)`, *p* `r format_p_value(stats_hand1$test_paired$p.value)`, *d* = `r sprintf("%.2f", stats_hand1$cohen_d_paired)`.
+
+Similarly, in Experiment 2, the previous hand used did not significantly modulate serial dependence strength (previous left: *M* = `r sprintf("%.2f", stats_hand2$mean1)`, *SD* = `r sprintf("%.2f", stats_hand2$sd1)`; previous right: *M* = `r sprintf("%.2f", stats_hand2$mean2)`, *SD* = `r sprintf("%.2f", stats_hand2$sd2)`), *t*(`r stats_hand2$test_paired$parameter`) = `r sprintf("%.2f", stats_hand2$test_paired$statistic)`, *p* `r format_p_value(stats_hand2$test_paired$p.value)`, *d* = `r sprintf("%.2f", stats_hand2$cohen_d_paired)`.
+
+# 6. Summary
+
+This analysis examined serial dependence effects in orientation discrimination and confidence judgments across two experiments manipulating hand and action repetition.
+
+**Key findings:**
+
+1. **Robust serial dependence**: Both choice and confidence judgments showed significant positive serial dependence, replicating across experiments
+2. **Modulation by repetition**: Serial dependence was consistently stronger when the same hand or action was repeated compared to when it switched
+3. **No dominant hand effect**: The specific hand used (left vs. right) did not systematically influence serial dependence strength
+
+**Methodological improvements in v2:**
+
+- Added comprehensive descriptive statistics providing task performance context
+- Replaced bar plots with boxplots for better visualization of distributions
+- Combined experiments into multi-panel figures for easier comparison
+- Applied colorblind-friendly color palette for improved accessibility
+- Integrated APA-style statistical reporting throughout
+
+All analyses used linear regression to quantify trial-by-trial dependencies, with statistical significance assessed via one-sample and paired t-tests. Effect sizes (Cohen's *d*) are reported for all comparisons following APA guidelines.
+
+**Output files:**
+
+- Figures saved to `figures_v2/` directory
+- All figures available in both PNG (300 dpi) and PDF formats
+- Combined panels labeled A and B for publication standards
+
+---
+
+**Analysis complete:** `r Sys.Date()`

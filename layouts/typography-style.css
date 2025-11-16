@@ -1,0 +1,84 @@
+/* Typography Template - Enhanced Styling for Slidev Presentations */
+
+/* Headings */
+h1 {
+  font-size: 2.5rem !important;
+  font-weight: 700 !important;
+  margin-bottom: 1rem !important;
+  color: var(--slidev-theme-primary, #3B82F6) !important;
+}
+
+h2 {
+  font-size: 2rem !important;
+  font-weight: 600 !important;
+  margin-bottom: 0.8rem !important;
+  color: var(--slidev-theme-primary, #3B82F6) !important;
+}
+
+h3 {
+  font-size: 1.5rem !important;
+  font-weight: 600 !important;
+  margin-bottom: 0.6rem !important;
+  color: var(--slidev-theme-secondary, #1F2937) !important;
+}
+
+/* Lists with dash bullets */
+ul {
+  margin: 0.5rem 0 !important;
+  padding-left: 1.5rem !important;
+  list-style: none !important;
+}
+
+li {
+  margin-bottom: 0.4rem !important;
+  line-height: 1.6 !important;
+  position: relative !important;
+}
+
+li::before {
+  content: "– " !important;
+  color: var(--slidev-theme-primary, #3B82F6) !important;
+  font-weight: 600 !important;
+  position: absolute !important;
+  left: -1.2rem !important;
+}
+
+/* Nested lists */
+ul ul {
+  margin-top: 0.2rem !important;
+  margin-bottom: 0.2rem !important;
+}
+
+ul ul li::before {
+  content: "• " !important;
+  left: -1rem !important;
+}
+
+/* Paragraphs */
+p {
+  margin-bottom: 0.8rem !important;
+  line-height: 1.6 !important;
+}
+
+/* Blockquotes */
+blockquote {
+  border-left: 4px solid var(--slidev-theme-primary, #3B82F6) !important;
+  padding-left: 1rem !important;
+  margin: 1rem 0 !important;
+  font-style: italic !important;
+  color: var(--slidev-theme-secondary, #6B7280) !important;
+}
+
+/* Strong/Bold text */
+strong {
+  color: var(--slidev-theme-primary, #3B82F6) !important;
+  font-weight: 600 !important;
+}
+
+/* Code styling */
+code {
+  background-color: var(--slidev-code-background, #f3f4f6) !important;
+  padding: 0.2rem 0.4rem !important;
+  border-radius: 0.25rem !important;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace !important;
+}
